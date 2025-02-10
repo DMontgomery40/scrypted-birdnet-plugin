@@ -1488,697 +1488,175 @@ var ScryptedMimeTypes;
 
 /***/ }),
 
-/***/ "./node_modules/fft.js/lib/fft.js":
-/*!****************************************!*\
-  !*** ./node_modules/fft.js/lib/fft.js ***!
-  \****************************************/
+/***/ "child_process":
+/*!********************************!*\
+  !*** external "child_process" ***!
+  \********************************/
 /***/ ((module) => {
 
 "use strict";
-
-
-function FFT(size) {
-  this.size = size | 0;
-  if (this.size <= 1 || (this.size & (this.size - 1)) !== 0)
-    throw new Error('FFT size must be a power of two and bigger than 1');
-
-  this._csize = size << 1;
-
-  // NOTE: Use of `var` is intentional for old V8 versions
-  var table = new Array(this.size * 2);
-  for (var i = 0; i < table.length; i += 2) {
-    const angle = Math.PI * i / this.size;
-    table[i] = Math.cos(angle);
-    table[i + 1] = -Math.sin(angle);
-  }
-  this.table = table;
-
-  // Find size's power of two
-  var power = 0;
-  for (var t = 1; this.size > t; t <<= 1)
-    power++;
-
-  // Calculate initial step's width:
-  //   * If we are full radix-4 - it is 2x smaller to give inital len=8
-  //   * Otherwise it is the same as `power` to give len=4
-  this._width = power % 2 === 0 ? power - 1 : power;
-
-  // Pre-compute bit-reversal patterns
-  this._bitrev = new Array(1 << this._width);
-  for (var j = 0; j < this._bitrev.length; j++) {
-    this._bitrev[j] = 0;
-    for (var shift = 0; shift < this._width; shift += 2) {
-      var revShift = this._width - shift - 2;
-      this._bitrev[j] |= ((j >>> shift) & 3) << revShift;
-    }
-  }
-
-  this._out = null;
-  this._data = null;
-  this._inv = 0;
-}
-module.exports = FFT;
-
-FFT.prototype.fromComplexArray = function fromComplexArray(complex, storage) {
-  var res = storage || new Array(complex.length >>> 1);
-  for (var i = 0; i < complex.length; i += 2)
-    res[i >>> 1] = complex[i];
-  return res;
-};
-
-FFT.prototype.createComplexArray = function createComplexArray() {
-  const res = new Array(this._csize);
-  for (var i = 0; i < res.length; i++)
-    res[i] = 0;
-  return res;
-};
-
-FFT.prototype.toComplexArray = function toComplexArray(input, storage) {
-  var res = storage || this.createComplexArray();
-  for (var i = 0; i < res.length; i += 2) {
-    res[i] = input[i >>> 1];
-    res[i + 1] = 0;
-  }
-  return res;
-};
-
-FFT.prototype.completeSpectrum = function completeSpectrum(spectrum) {
-  var size = this._csize;
-  var half = size >>> 1;
-  for (var i = 2; i < half; i += 2) {
-    spectrum[size - i] = spectrum[i];
-    spectrum[size - i + 1] = -spectrum[i + 1];
-  }
-};
-
-FFT.prototype.transform = function transform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 0;
-  this._transform4();
-  this._out = null;
-  this._data = null;
-};
-
-FFT.prototype.realTransform = function realTransform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 0;
-  this._realTransform4();
-  this._out = null;
-  this._data = null;
-};
-
-FFT.prototype.inverseTransform = function inverseTransform(out, data) {
-  if (out === data)
-    throw new Error('Input and output buffers must be different');
-
-  this._out = out;
-  this._data = data;
-  this._inv = 1;
-  this._transform4();
-  for (var i = 0; i < out.length; i++)
-    out[i] /= this.size;
-  this._out = null;
-  this._data = null;
-};
-
-// radix-4 implementation
-//
-// NOTE: Uses of `var` are intentional for older V8 version that do not
-// support both `let compound assignments` and `const phi`
-FFT.prototype._transform4 = function _transform4() {
-  var out = this._out;
-  var size = this._csize;
-
-  // Initial step (permute and transform)
-  var width = this._width;
-  var step = 1 << width;
-  var len = (size / step) << 1;
-
-  var outOff;
-  var t;
-  var bitrev = this._bitrev;
-  if (len === 4) {
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleTransform2(outOff, off, step);
-    }
-  } else {
-    // len === 8
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleTransform4(outOff, off, step);
-    }
-  }
-
-  // Loop through steps in decreasing order
-  var inv = this._inv ? -1 : 1;
-  var table = this.table;
-  for (step >>= 2; step >= 2; step >>= 2) {
-    len = (size / step) << 1;
-    var quarterLen = len >>> 2;
-
-    // Loop through offsets in the data
-    for (outOff = 0; outOff < size; outOff += len) {
-      // Full case
-      var limit = outOff + quarterLen;
-      for (var i = outOff, k = 0; i < limit; i += 2, k += step) {
-        const A = i;
-        const B = A + quarterLen;
-        const C = B + quarterLen;
-        const D = C + quarterLen;
-
-        // Original values
-        const Ar = out[A];
-        const Ai = out[A + 1];
-        const Br = out[B];
-        const Bi = out[B + 1];
-        const Cr = out[C];
-        const Ci = out[C + 1];
-        const Dr = out[D];
-        const Di = out[D + 1];
-
-        // Middle values
-        const MAr = Ar;
-        const MAi = Ai;
-
-        const tableBr = table[k];
-        const tableBi = inv * table[k + 1];
-        const MBr = Br * tableBr - Bi * tableBi;
-        const MBi = Br * tableBi + Bi * tableBr;
-
-        const tableCr = table[2 * k];
-        const tableCi = inv * table[2 * k + 1];
-        const MCr = Cr * tableCr - Ci * tableCi;
-        const MCi = Cr * tableCi + Ci * tableCr;
-
-        const tableDr = table[3 * k];
-        const tableDi = inv * table[3 * k + 1];
-        const MDr = Dr * tableDr - Di * tableDi;
-        const MDi = Dr * tableDi + Di * tableDr;
-
-        // Pre-Final values
-        const T0r = MAr + MCr;
-        const T0i = MAi + MCi;
-        const T1r = MAr - MCr;
-        const T1i = MAi - MCi;
-        const T2r = MBr + MDr;
-        const T2i = MBi + MDi;
-        const T3r = inv * (MBr - MDr);
-        const T3i = inv * (MBi - MDi);
-
-        // Final values
-        const FAr = T0r + T2r;
-        const FAi = T0i + T2i;
-
-        const FCr = T0r - T2r;
-        const FCi = T0i - T2i;
-
-        const FBr = T1r + T3i;
-        const FBi = T1i - T3r;
-
-        const FDr = T1r - T3i;
-        const FDi = T1i + T3r;
-
-        out[A] = FAr;
-        out[A + 1] = FAi;
-        out[B] = FBr;
-        out[B + 1] = FBi;
-        out[C] = FCr;
-        out[C + 1] = FCi;
-        out[D] = FDr;
-        out[D + 1] = FDi;
-      }
-    }
-  }
-};
-
-// radix-2 implementation
-//
-// NOTE: Only called for len=4
-FFT.prototype._singleTransform2 = function _singleTransform2(outOff, off,
-                                                             step) {
-  const out = this._out;
-  const data = this._data;
-
-  const evenR = data[off];
-  const evenI = data[off + 1];
-  const oddR = data[off + step];
-  const oddI = data[off + step + 1];
-
-  const leftR = evenR + oddR;
-  const leftI = evenI + oddI;
-  const rightR = evenR - oddR;
-  const rightI = evenI - oddI;
-
-  out[outOff] = leftR;
-  out[outOff + 1] = leftI;
-  out[outOff + 2] = rightR;
-  out[outOff + 3] = rightI;
-};
-
-// radix-4
-//
-// NOTE: Only called for len=8
-FFT.prototype._singleTransform4 = function _singleTransform4(outOff, off,
-                                                             step) {
-  const out = this._out;
-  const data = this._data;
-  const inv = this._inv ? -1 : 1;
-  const step2 = step * 2;
-  const step3 = step * 3;
-
-  // Original values
-  const Ar = data[off];
-  const Ai = data[off + 1];
-  const Br = data[off + step];
-  const Bi = data[off + step + 1];
-  const Cr = data[off + step2];
-  const Ci = data[off + step2 + 1];
-  const Dr = data[off + step3];
-  const Di = data[off + step3 + 1];
-
-  // Pre-Final values
-  const T0r = Ar + Cr;
-  const T0i = Ai + Ci;
-  const T1r = Ar - Cr;
-  const T1i = Ai - Ci;
-  const T2r = Br + Dr;
-  const T2i = Bi + Di;
-  const T3r = inv * (Br - Dr);
-  const T3i = inv * (Bi - Di);
-
-  // Final values
-  const FAr = T0r + T2r;
-  const FAi = T0i + T2i;
-
-  const FBr = T1r + T3i;
-  const FBi = T1i - T3r;
-
-  const FCr = T0r - T2r;
-  const FCi = T0i - T2i;
-
-  const FDr = T1r - T3i;
-  const FDi = T1i + T3r;
-
-  out[outOff] = FAr;
-  out[outOff + 1] = FAi;
-  out[outOff + 2] = FBr;
-  out[outOff + 3] = FBi;
-  out[outOff + 4] = FCr;
-  out[outOff + 5] = FCi;
-  out[outOff + 6] = FDr;
-  out[outOff + 7] = FDi;
-};
-
-// Real input radix-4 implementation
-FFT.prototype._realTransform4 = function _realTransform4() {
-  var out = this._out;
-  var size = this._csize;
-
-  // Initial step (permute and transform)
-  var width = this._width;
-  var step = 1 << width;
-  var len = (size / step) << 1;
-
-  var outOff;
-  var t;
-  var bitrev = this._bitrev;
-  if (len === 4) {
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleRealTransform2(outOff, off >>> 1, step >>> 1);
-    }
-  } else {
-    // len === 8
-    for (outOff = 0, t = 0; outOff < size; outOff += len, t++) {
-      const off = bitrev[t];
-      this._singleRealTransform4(outOff, off >>> 1, step >>> 1);
-    }
-  }
-
-  // Loop through steps in decreasing order
-  var inv = this._inv ? -1 : 1;
-  var table = this.table;
-  for (step >>= 2; step >= 2; step >>= 2) {
-    len = (size / step) << 1;
-    var halfLen = len >>> 1;
-    var quarterLen = halfLen >>> 1;
-    var hquarterLen = quarterLen >>> 1;
-
-    // Loop through offsets in the data
-    for (outOff = 0; outOff < size; outOff += len) {
-      for (var i = 0, k = 0; i <= hquarterLen; i += 2, k += step) {
-        var A = outOff + i;
-        var B = A + quarterLen;
-        var C = B + quarterLen;
-        var D = C + quarterLen;
-
-        // Original values
-        var Ar = out[A];
-        var Ai = out[A + 1];
-        var Br = out[B];
-        var Bi = out[B + 1];
-        var Cr = out[C];
-        var Ci = out[C + 1];
-        var Dr = out[D];
-        var Di = out[D + 1];
-
-        // Middle values
-        var MAr = Ar;
-        var MAi = Ai;
-
-        var tableBr = table[k];
-        var tableBi = inv * table[k + 1];
-        var MBr = Br * tableBr - Bi * tableBi;
-        var MBi = Br * tableBi + Bi * tableBr;
-
-        var tableCr = table[2 * k];
-        var tableCi = inv * table[2 * k + 1];
-        var MCr = Cr * tableCr - Ci * tableCi;
-        var MCi = Cr * tableCi + Ci * tableCr;
-
-        var tableDr = table[3 * k];
-        var tableDi = inv * table[3 * k + 1];
-        var MDr = Dr * tableDr - Di * tableDi;
-        var MDi = Dr * tableDi + Di * tableDr;
-
-        // Pre-Final values
-        var T0r = MAr + MCr;
-        var T0i = MAi + MCi;
-        var T1r = MAr - MCr;
-        var T1i = MAi - MCi;
-        var T2r = MBr + MDr;
-        var T2i = MBi + MDi;
-        var T3r = inv * (MBr - MDr);
-        var T3i = inv * (MBi - MDi);
-
-        // Final values
-        var FAr = T0r + T2r;
-        var FAi = T0i + T2i;
-
-        var FBr = T1r + T3i;
-        var FBi = T1i - T3r;
-
-        out[A] = FAr;
-        out[A + 1] = FAi;
-        out[B] = FBr;
-        out[B + 1] = FBi;
-
-        // Output final middle point
-        if (i === 0) {
-          var FCr = T0r - T2r;
-          var FCi = T0i - T2i;
-          out[C] = FCr;
-          out[C + 1] = FCi;
-          continue;
-        }
-
-        // Do not overwrite ourselves
-        if (i === hquarterLen)
-          continue;
-
-        // In the flipped case:
-        // MAi = -MAi
-        // MBr=-MBi, MBi=-MBr
-        // MCr=-MCr
-        // MDr=MDi, MDi=MDr
-        var ST0r = T1r;
-        var ST0i = -T1i;
-        var ST1r = T0r;
-        var ST1i = -T0i;
-        var ST2r = -inv * T3i;
-        var ST2i = -inv * T3r;
-        var ST3r = -inv * T2i;
-        var ST3i = -inv * T2r;
-
-        var SFAr = ST0r + ST2r;
-        var SFAi = ST0i + ST2i;
-
-        var SFBr = ST1r + ST3i;
-        var SFBi = ST1i - ST3r;
-
-        var SA = outOff + quarterLen - i;
-        var SB = outOff + halfLen - i;
-
-        out[SA] = SFAr;
-        out[SA + 1] = SFAi;
-        out[SB] = SFBr;
-        out[SB + 1] = SFBi;
-      }
-    }
-  }
-};
-
-// radix-2 implementation
-//
-// NOTE: Only called for len=4
-FFT.prototype._singleRealTransform2 = function _singleRealTransform2(outOff,
-                                                                     off,
-                                                                     step) {
-  const out = this._out;
-  const data = this._data;
-
-  const evenR = data[off];
-  const oddR = data[off + step];
-
-  const leftR = evenR + oddR;
-  const rightR = evenR - oddR;
-
-  out[outOff] = leftR;
-  out[outOff + 1] = 0;
-  out[outOff + 2] = rightR;
-  out[outOff + 3] = 0;
-};
-
-// radix-4
-//
-// NOTE: Only called for len=8
-FFT.prototype._singleRealTransform4 = function _singleRealTransform4(outOff,
-                                                                     off,
-                                                                     step) {
-  const out = this._out;
-  const data = this._data;
-  const inv = this._inv ? -1 : 1;
-  const step2 = step * 2;
-  const step3 = step * 3;
-
-  // Original values
-  const Ar = data[off];
-  const Br = data[off + step];
-  const Cr = data[off + step2];
-  const Dr = data[off + step3];
-
-  // Pre-Final values
-  const T0r = Ar + Cr;
-  const T1r = Ar - Cr;
-  const T2r = Br + Dr;
-  const T3r = inv * (Br - Dr);
-
-  // Final values
-  const FAr = T0r + T2r;
-
-  const FBr = T1r;
-  const FBi = -T3r;
-
-  const FCr = T0r - T2r;
-
-  const FDr = T1r;
-  const FDi = T3r;
-
-  out[outOff] = FAr;
-  out[outOff + 1] = 0;
-  out[outOff + 2] = FBr;
-  out[outOff + 3] = FBi;
-  out[outOff + 4] = FCr;
-  out[outOff + 5] = 0;
-  out[outOff + 6] = FDr;
-  out[outOff + 7] = FDi;
-};
-
+module.exports = require("child_process");
 
 /***/ }),
 
-/***/ "./src/birdnet-analyzer.ts":
-/*!*********************************!*\
-  !*** ./src/birdnet-analyzer.ts ***!
-  \*********************************/
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+/***/ "fs":
+/*!*********************!*\
+  !*** external "fs" ***!
+  \*********************/
+/***/ ((module) => {
 
 "use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.predict = exports.createSpectrogram = exports.loadModelAndLabels = void 0;
-const sdk_1 = __importDefault(__webpack_require__(/*! @scrypted/sdk */ "./node_modules/@scrypted/sdk/dist/src/index.js"));
-const fft_js_1 = __importDefault(__webpack_require__(/*! fft.js */ "./node_modules/fft.js/lib/fft.js"));
-const fs_1 = __webpack_require__(/*! fs */ "fs");
-const path_1 = __webpack_require__(/*! path */ "path");
-const { systemManager } = sdk_1.default;
-// Instead of top-level await, we'll initialize in a function
-let tflite;
-async function initTFLite() {
-    if (!tflite) {
-        tflite = await systemManager.getComponent('tensorflow-lite');
-    }
-    return tflite;
-}
-// Constants from BirdNET-Analyzer
-const SAMPLE_RATE = 48000;
-const SPEC_LENGTH = 384;
-const MEL_BANDS = 128;
-const WINDOW_SIZE = 2048;
-const HOP_LENGTH = 1024;
-// Use absolute paths from plugin root
-const MODEL_PATH = (0, path_1.join)(process.env.SCRYPTED_PLUGIN_PATH || '', 'models/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite');
-const LABELS_PATH = (0, path_1.join)(process.env.SCRYPTED_PLUGIN_PATH || '', 'models/labels_en.txt');
-async function loadModelAndLabels() {
-    try {
-        // Initialize TFLite first
-        tflite = await initTFLite();
-        // Read the model file
-        const modelBuffer = (0, fs_1.readFileSync)(MODEL_PATH);
-        // Read and parse the English labels file
-        const labelsText = (0, fs_1.readFileSync)(LABELS_PATH, 'utf8');
-        const labels = labelsText.split('\n')
-            .map(line => line.trim())
-            .filter(line => line.length > 0);
-        // Load model using Scrypted's TFLite
-        const model = await tflite.loadModel(modelBuffer);
-        return { model, labels };
-    }
-    catch (err) {
-        console.error('Error loading model/labels:', err);
-        throw err;
-    }
-}
-exports.loadModelAndLabels = loadModelAndLabels;
-async function createSpectrogram(samples) {
-    try {
-        // Create overlapping windows
-        const frames = [];
-        for (let i = 0; i < samples.length - WINDOW_SIZE; i += HOP_LENGTH) {
-            const frame = samples.slice(i, i + WINDOW_SIZE);
-            frames.push(frame);
-        }
-        // Apply FFT to each frame
-        const fft = new fft_js_1.default(WINDOW_SIZE);
-        const spectrogramFrames = frames.map(frame => {
-            // Apply Hann window
-            const windowedFrame = frame.map((x, i) => x * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (WINDOW_SIZE - 1))));
-            // Compute FFT
-            const fftResult = fft.createComplexArray();
-            fft.realTransform(fftResult, windowedFrame);
-            // Get magnitude
-            const magnitudes = new Float32Array(WINDOW_SIZE / 2 + 1);
-            for (let i = 0; i < magnitudes.length; i++) {
-                const real = fftResult[2 * i];
-                const imag = fftResult[2 * i + 1];
-                magnitudes[i] = Math.sqrt(real * real + imag * imag);
-            }
-            return magnitudes;
-        });
-        // Convert to mel scale
-        const melBasis = createMelFilterbank(WINDOW_SIZE / 2 + 1, SAMPLE_RATE, MEL_BANDS);
-        const melSpectrogram = spectrogramFrames.map(frame => {
-            return applyMelFilterbank(frame, melBasis);
-        });
-        // Convert to dB scale and normalize
-        const spec = new Float32Array(melSpectrogram.flat());
-        const tensor = await tflite.createTensor(spec, [1, melSpectrogram.length, MEL_BANDS, 1]);
-        return tensor;
-    }
-    catch (err) {
-        console.error('Error creating spectrogram:', err);
-        throw err;
-    }
-}
-exports.createSpectrogram = createSpectrogram;
-function createMelFilterbank(nFft, sampleRate, nMels) {
-    // Create mel scale points
-    const melMax = freqToMel(sampleRate / 2);
-    const melMin = freqToMel(0);
-    const melStep = (melMax - melMin) / (nMels + 1);
-    const melFreqs = Array.from({ length: nMels + 2 }, (_, i) => melMin + melStep * i);
-    const freqPoints = melFreqs.map(mel => melToFreq(mel));
-    // Create filterbank matrix
-    const filterbank = new Array(nMels).fill(0).map(() => new Float32Array(nFft));
-    for (let i = 0; i < nMels; i++) {
-        const f_left = freqPoints[i];
-        const f_center = freqPoints[i + 1];
-        const f_right = freqPoints[i + 2];
-        for (let j = 0; j < nFft; j++) {
-            const freq = (j * sampleRate) / (2 * nFft);
-            if (freq >= f_left && freq <= f_right) {
-                if (freq <= f_center) {
-                    filterbank[i][j] = (freq - f_left) / (f_center - f_left);
-                }
-                else {
-                    filterbank[i][j] = (f_right - freq) / (f_right - f_center);
-                }
-            }
-        }
-    }
-    return filterbank;
-}
-function freqToMel(freq) {
-    return 2595 * Math.log10(1 + freq / 700);
-}
-function melToFreq(mel) {
-    return 700 * (Math.pow(10, mel / 2595) - 1);
-}
-function applyMelFilterbank(spectrum, filterbank) {
-    return filterbank.map(filter => {
-        let sum = 0;
-        for (let i = 0; i < spectrum.length; i++) {
-            sum += spectrum[i] * filter[i];
-        }
-        return sum;
-    });
-}
-async function predict(model, spectrogram) {
-    try {
-        // Run inference using TFLite
-        const predictions = await model.predict(spectrogram);
-        return predictions;
-    }
-    catch (err) {
-        console.error('Error during prediction:', err);
-        throw err;
-    }
-}
-exports.predict = predict;
-
+module.exports = require("fs");
 
 /***/ }),
 
-/***/ "./src/main.ts":
+/***/ "http":
+/*!***********************!*\
+  !*** external "http" ***!
+  \***********************/
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("http");
+
+/***/ }),
+
+/***/ "module":
+/*!*************************!*\
+  !*** external "module" ***!
+  \*************************/
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("module");
+
+/***/ }),
+
+/***/ "os":
+/*!*********************!*\
+  !*** external "os" ***!
+  \*********************/
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("os");
+
+/***/ }),
+
+/***/ "path":
+/*!***********************!*\
+  !*** external "path" ***!
+  \***********************/
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("path");
+
+/***/ }),
+
+/***/ "stream":
+/*!*************************!*\
+  !*** external "stream" ***!
+  \*************************/
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("stream");
+
+/***/ })
+
+/******/ 	});
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	var __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	/* webpack/runtime/compat get default export */
+/******/ 	(() => {
+/******/ 		// getDefaultExport function for compatibility with non-harmony modules
+/******/ 		__webpack_require__.n = (module) => {
+/******/ 			var getter = module && module.__esModule ?
+/******/ 				() => (module['default']) :
+/******/ 				() => (module);
+/******/ 			__webpack_require__.d(getter, { a: getter });
+/******/ 			return getter;
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/************************************************************************/
+var __webpack_exports__ = {};
+// This entry needs to be wrapped in an IIFE because it needs to be in strict mode.
+(() => {
+"use strict";
 /*!*********************!*\
   !*** ./src/main.ts ***!
   \*********************/
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @scrypted/sdk */ "./node_modules/@scrypted/sdk/dist/src/index.js");
+/* harmony import */ var _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var child_process__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! child_process */ "child_process");
+/* harmony import */ var child_process__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(child_process__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var stream__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! stream */ "stream");
+/* harmony import */ var stream__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(stream__WEBPACK_IMPORTED_MODULE_2__);
+/* harmony import */ var http__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! http */ "http");
+/* harmony import */ var http__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(http__WEBPACK_IMPORTED_MODULE_3__);
 
-"use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const sdk_1 = __webpack_require__(/*! @scrypted/sdk */ "./node_modules/@scrypted/sdk/dist/src/index.js");
-const child_process_1 = __webpack_require__(/*! child_process */ "child_process");
-const stream_1 = __webpack_require__(/*! stream */ "stream");
-const birdnet_analyzer_1 = __webpack_require__(/*! ./birdnet-analyzer */ "./src/birdnet-analyzer.ts");
-const http_1 = __importDefault(__webpack_require__(/*! http */ "http"));
-class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
+
+
+class BirdNETPlugin extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceBase {
     constructor(nativeId) {
         super(nativeId);
         this.devices = new Map();
@@ -2186,16 +1664,13 @@ class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
         this.birdnetProcess = null;
         this.audioStream = null;
         this.ffmpegAudioProcess = null;
-        // Add model property
-        this.model = null;
         // Plugin settings
         this.settings = {};
-        this.mediaManager = sdk_1.sdk.mediaManager;
-        this.deviceManager = sdk_1.sdk.deviceManager;
+        // TTY output storage
+        this.ttyOutput = "";
+        this.mediaManager = _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.mediaManager;
+        this.deviceManager = _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.deviceManager;
         this.loadSettings();
-        if (this.settings.mode === 'self-contained') {
-            this.initializeModel();
-        }
         this.startBirdNET();
     }
     loadSettings() {
@@ -2207,71 +1682,94 @@ class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
     }
     async startBirdNET() {
         try {
-            if (this.settings.mode === 'self-contained') {
-                // Initialize audio stream for self-contained mode
-                this.audioStream = new stream_1.PassThrough();
+            if (this.settings.mode === 'external') {
                 if (this.settings.audioSource === 'rtsp') {
+                    this.audioStream = new stream__WEBPACK_IMPORTED_MODULE_2__.PassThrough();
                     this.startAudioCapture();
                 }
+                this.console.log('Starting external BirdNET-Go...');
                 try {
-                    this.console.log('Starting BirdNET-Go...');
-                    // Check if BirdNET-Go is installed
-                    try {
-                        await new Promise((resolve, reject) => {
-                            const proc = (0, child_process_1.spawn)('which', ['birdnet-go']);
-                            proc.on('exit', (code) => code === 0 ? resolve(null) : reject());
-                        });
-                    }
-                    catch (e) {
-                        throw new Error('BirdNET-Go not found. Please install BirdNET-Go first.');
-                    }
-                    // Start BirdNET-Go with appropriate flags
-                    this.birdnetProcess = (0, child_process_1.spawn)('birdnet-go', [
-                        'realtime',
-                        '--threshold', this.settings.birdnetThreshold.toString(),
-                        '--locale', 'en',
-                        ...(this.settings.audioSource === 'rtsp' ? ['--audio-stdin'] : [])
-                    ]);
-                    if (this.settings.audioSource === 'rtsp') {
-                        this.audioStream.pipe(this.birdnetProcess.stdin);
-                    }
-                    // Handle BirdNET-Go output in TTY
-                    this.birdnetProcess.stdout.on('data', (data) => {
-                        const text = data.toString();
-                        const match = text.match(/Detected\s+(.+?)\s+\((0\.\d+)\)/);
-                        if (match) {
-                            const [_, species, confidence] = match;
-                            const confidencePct = (parseFloat(confidence) * 100).toFixed(1);
-                            this.updateTTYDisplay([{
-                                    species,
-                                    confidence: parseFloat(confidence)
-                                }]);
-                        }
+                    await new Promise((resolve, reject) => {
+                        const proc = (0,child_process__WEBPACK_IMPORTED_MODULE_1__.spawn)('which', ['birdnet-go']);
+                        proc.on('exit', (code) => code === 0 ? resolve(null) : reject());
                     });
                 }
-                catch (err) {
-                    if (err instanceof Error) {
-                        this.console.error('Failed to start BirdNET-Go:', err.message);
-                        process.stdout.write(`\x1b[31mError: ${err.message}\x1b[0m\n`);
-                    }
-                    throw err;
+                catch (e) {
+                    throw new Error('BirdNET-Go not found. Please install BirdNET-Go first.');
                 }
+                this.birdnetProcess = (0,child_process__WEBPACK_IMPORTED_MODULE_1__.spawn)('birdnet-go', [
+                    'realtime',
+                    '--threshold', this.settings.birdnetThreshold.toString(),
+                    '--locale', 'en',
+                    ...(this.settings.audioSource === 'rtsp' ? ['--audio-stdin'] : [])
+                ]);
+                if (this.settings.audioSource === 'rtsp' && this.audioStream) {
+                    this.audioStream.pipe(this.birdnetProcess.stdin);
+                }
+                this.birdnetProcess.stdout.on('data', (data) => {
+                    const text = data.toString();
+                    this.updateTTYDisplayFromExternal(text);
+                });
+                this.birdnetProcess.stderr.on('data', (data) => {
+                    this.console.error(data.toString());
+                });
+                this.birdnetProcess.on('exit', (code) => {
+                    this.console.log(`BirdNET-Go exited with code ${code}`);
+                });
             }
-            else {
-                // External mode - poll the external BirdNET instance
-                this.pollExternalBirdNET();
+            else if (this.settings.mode === 'self-contained') {
+                this.console.log('Initializing self-contained BirdNET analysis');
+                if (this.settings.audioSource === 'rtsp') {
+                    this.audioStream = new stream__WEBPACK_IMPORTED_MODULE_2__.PassThrough();
+                    this.startAudioCapture();
+                }
+                this.processSelfContainedAudio();
             }
         }
         catch (err) {
-            this.console.error('Error starting BirdNET:', err.message);
-            process.stdout.write(`\x1b[31mError: ${err.message}\x1b[0m\n`);
-            throw err;
+            this.console.error('Error in startBirdNET:', err);
         }
+    }
+    processSelfContainedAudio() {
+        const bufferChunks = [];
+        if (this.audioStream) {
+            this.audioStream.on('data', async (chunk) => {
+                bufferChunks.push(chunk);
+                // Assuming mono 16-bit PCM at 48000 Hz, 1 second ~ 48000 samples * 2 bytes/sample
+                const THRESHOLD = 48000 * 2;
+                const totalLength = bufferChunks.reduce((sum, buf) => sum + buf.length, 0);
+                if (totalLength >= THRESHOLD) {
+                    const buffer = Buffer.concat(bufferChunks);
+                    bufferChunks.length = 0;
+                    const samples = new Float32Array(buffer.length / 2);
+                    for (let i = 0; i < samples.length; i++) {
+                        samples[i] = buffer.readInt16LE(i * 2) / 32768;
+                    }
+                    try {
+                        const predictions = await this.analyzeAudioChunk(samples);
+                        this.console.log('Self-contained predictions:', predictions);
+                        this.updateTTYDisplayFromSelfContained(predictions);
+                    }
+                    catch (err) {
+                        this.console.error('Error analyzing audio chunk:', err);
+                    }
+                }
+            });
+        }
+    }
+    updateTTYDisplayFromExternal(text) {
+        this.console.log('External UI Output:', text);
+        this.ttyOutput += text + "\n";
+    }
+    updateTTYDisplayFromSelfContained(predictions) {
+        const predictionText = JSON.stringify(predictions, null, 2);
+        this.console.log('Self-contained Analysis UI:', predictionText);
+        this.ttyOutput += predictionText + "\n";
     }
     pollExternalBirdNET() {
         const pollInterval = 1000; // Poll every second
         setInterval(() => {
-            http_1.default.get(this.settings.birdnetUIURL, (res) => {
+            http__WEBPACK_IMPORTED_MODULE_3___default().get(this.settings.birdnetUIURL, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
@@ -2319,7 +1817,7 @@ class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
     }
     startAudioCapture() {
         if (this.settings.audioSource === 'rtsp') {
-            this.ffmpegAudioProcess = (0, child_process_1.spawn)('ffmpeg', [
+            this.ffmpegAudioProcess = (0,child_process__WEBPACK_IMPORTED_MODULE_1__.spawn)('ffmpeg', [
                 '-i', this.settings.rtspAudioURL,
                 '-vn',
                 '-acodec', 'pcm_s16le',
@@ -2417,49 +1915,85 @@ class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
     async releaseDevice(id, nativeId) {
         // Cleanup logic when device is removed
     }
-    async initializeModel() {
-        try {
-            // Load bundled model and labels
-            const { model, labels } = await (0, birdnet_analyzer_1.loadModelAndLabels)();
-            this.model = model;
-            this.labels = labels;
-            this.console.log('BirdNET model and labels loaded successfully');
-        }
-        catch (err) {
-            this.console.error('Failed to initialize BirdNET model:', err);
-        }
-    }
-    // Update analyzeAudioChunk
     async analyzeAudioChunk(samples) {
         try {
-            if (!this.model) {
-                throw new Error('Model not loaded');
-            }
-            // Create spectrogram
-            const spectrogram = await (0, birdnet_analyzer_1.createSpectrogram)(samples);
-            // Run inference
-            const predictions = await (0, birdnet_analyzer_1.predict)(this.model, spectrogram);
-            // Process results
-            const results = this.postprocessResults(predictions);
-            // Log detections
-            for (const result of results) {
-                if (result.confidence >= this.settings.birdnetThreshold) {
-                    this.console.log(`BirdNET Detection: ${result.species} (${(result.confidence * 100).toFixed(1)}% confidence)`);
-                }
-            }
-            // Clean up
-            spectrogram.dispose();
+            // Create WAV buffer from samples
+            const wavBuffer = this.createWavBuffer(samples);
+            // Write temporary WAV file
+            const os = __webpack_require__(/*! os */ "os");
+            const fs = __webpack_require__(/*! fs */ "fs");
+            const path = __webpack_require__(/*! path */ "path");
+            const tmpDir = os.tmpdir();
+            const tmpFile = path.join(tmpDir, `birdnet-${Date.now()}.wav`);
+            fs.writeFileSync(tmpFile, wavBuffer);
+            return new Promise((resolve, reject) => {
+                const pythonScript = path.join(process.env.SCRYPTED_PLUGIN_PATH || '', 'python/birdnet_analysis.py');
+                const pythonProcess = (0,child_process__WEBPACK_IMPORTED_MODULE_1__.spawn)('python3', [
+                    pythonScript,
+                    '--model', path.join(process.env.SCRYPTED_PLUGIN_PATH || '', 'models/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite'),
+                    '--labels', path.join(process.env.SCRYPTED_PLUGIN_PATH || '', 'models/labels_nm.txt'),
+                    '--wav', tmpFile
+                ]);
+                let stdoutData = '';
+                let stderrData = '';
+                pythonProcess.stdout.on('data', data => { stdoutData += data.toString(); });
+                pythonProcess.stderr.on('data', data => { stderrData += data.toString(); });
+                pythonProcess.on('close', code => {
+                    fs.unlinkSync(tmpFile);
+                    if (code === 0) {
+                        try {
+                            const detections = JSON.parse(stdoutData);
+                            resolve(detections);
+                        }
+                        catch (err) {
+                            reject(new Error('Error parsing Python output: ' + err.message));
+                        }
+                    }
+                    else {
+                        reject(new Error('Python process exited with code ' + code + ': ' + stderrData));
+                    }
+                });
+            });
         }
         catch (err) {
             this.console.error('Audio analysis error:', err);
+            throw err;
         }
+    }
+    createWavBuffer(samples) {
+        const numChannels = 1;
+        const sampleRate = 48000;
+        const bitsPerSample = 16;
+        const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+        const blockAlign = numChannels * bitsPerSample / 8;
+        const dataLength = samples.length * 2; // 2 bytes per sample
+        const buffer = Buffer.alloc(44 + dataLength);
+        // RIFF header
+        buffer.write('RIFF', 0);
+        buffer.writeUInt32LE(36 + dataLength, 4);
+        buffer.write('WAVE', 8);
+        // fmt subchunk
+        buffer.write('fmt ', 12);
+        buffer.writeUInt32LE(16, 16);
+        buffer.writeUInt16LE(1, 20); // PCM
+        buffer.writeUInt16LE(numChannels, 22);
+        buffer.writeUInt32LE(sampleRate, 24);
+        buffer.writeUInt32LE(byteRate, 28);
+        buffer.writeUInt16LE(blockAlign, 32);
+        buffer.writeUInt16LE(bitsPerSample, 34);
+        // data subchunk
+        buffer.write('data', 36);
+        buffer.writeUInt32LE(dataLength, 40);
+        for (let i = 0; i < samples.length; i++) {
+            let s = Math.max(-1, Math.min(1, samples[i]));
+            let intSample = Math.round(s * 32767);
+            buffer.writeInt16LE(intSample, 44 + i * 2);
+        }
+        return buffer;
     }
     // Implement Web interface
     async getResource(requestBody) {
-        if (this.settings.mode === 'external') {
-            return this.settings.birdnetUIURL;
-        }
-        return 'http://localhost:8080';
+        return `<html><head><title>BirdNET TTY UI</title></head><body><pre>${this.ttyOutput}</pre></body></html>`;
     }
     postprocessResults(predictions) {
         // Implement BirdNET's post-processing
@@ -2487,10 +2021,10 @@ class BirdNETPlugin extends sdk_1.ScryptedDeviceBase {
         }
     }
 }
-class BirdNETCameraDevice extends sdk_1.ScryptedDeviceBase {
+class BirdNETCameraDevice extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceBase {
     constructor(nativeId) {
         super(nativeId);
-        this.mediaManager = sdk_1.sdk.mediaManager;
+        this.mediaManager = _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.mediaManager;
     }
     async getVideoStreamOptions() {
         return [{
@@ -2506,137 +2040,31 @@ class BirdNETCameraDevice extends sdk_1.ScryptedDeviceBase {
     }
     async getVideoStream(options) {
         // Get the x11-camera plugin instance
-        const x11Plugin = await sdk_1.sdk.systemManager.getDeviceByName('@scrypted/x11-camera');
+        const x11Plugin = await _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.systemManager.getDeviceByName('@scrypted/x11-camera');
         if (!x11Plugin) {
             throw new Error('Please install the x11-camera plugin from the Scrypted plugin store');
         }
         // Create a new x11 camera device through the plugin
         const deviceId = await x11Plugin.createDevice({
             name: 'BirdNET Display',
-            type: sdk_1.ScryptedDeviceType.Camera,
+            type: _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceType.Camera,
             nativeId: this.nativeId + '_x11',
-            interfaces: [sdk_1.ScryptedInterface.VideoCamera]
+            interfaces: [_scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedInterface.VideoCamera]
         });
         // Get the device instance
-        const x11Device = await sdk_1.sdk.systemManager.getDeviceById(deviceId);
+        const x11Device = await _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.systemManager.getDeviceById(deviceId);
         // Get the stream from the x11 camera device
         return x11Device.getVideoStream(options);
     }
 }
 // Export the plugin instance.
-exports["default"] = BirdNETPlugin;
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (BirdNETPlugin);
 
+})();
 
-/***/ }),
-
-/***/ "child_process":
-/*!********************************!*\
-  !*** external "child_process" ***!
-  \********************************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("child_process");
-
-/***/ }),
-
-/***/ "fs":
-/*!*********************!*\
-  !*** external "fs" ***!
-  \*********************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("fs");
-
-/***/ }),
-
-/***/ "http":
-/*!***********************!*\
-  !*** external "http" ***!
-  \***********************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("http");
-
-/***/ }),
-
-/***/ "module":
-/*!*************************!*\
-  !*** external "module" ***!
-  \*************************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("module");
-
-/***/ }),
-
-/***/ "path":
-/*!***********************!*\
-  !*** external "path" ***!
-  \***********************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("path");
-
-/***/ }),
-
-/***/ "stream":
-/*!*************************!*\
-  !*** external "stream" ***!
-  \*************************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("stream");
-
-/***/ })
-
-/******/ 	});
-/************************************************************************/
-/******/ 	// The module cache
-/******/ 	var __webpack_module_cache__ = {};
-/******/ 	
-/******/ 	// The require function
-/******/ 	function __webpack_require__(moduleId) {
-/******/ 		// Check if module is in cache
-/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
-/******/ 		if (cachedModule !== undefined) {
-/******/ 			return cachedModule.exports;
-/******/ 		}
-/******/ 		// Create a new module (and put it into the cache)
-/******/ 		var module = __webpack_module_cache__[moduleId] = {
-/******/ 			// no module.id needed
-/******/ 			// no module.loaded needed
-/******/ 			exports: {}
-/******/ 		};
-/******/ 	
-/******/ 		// Execute the module function
-/******/ 		__webpack_modules__[moduleId].call(module.exports, module, module.exports, __webpack_require__);
-/******/ 	
-/******/ 		// Return the exports of the module
-/******/ 		return module.exports;
-/******/ 	}
-/******/ 	
-/************************************************************************/
-/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
-/******/ 	(() => {
-/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-/******/ 	})();
-/******/ 	
-/************************************************************************/
-/******/ 	
-/******/ 	// startup
-/******/ 	// Load entry module and return exports
-/******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __webpack_require__("./src/main.ts");
-/******/ 	var __webpack_export_target__ = (exports = typeof exports === "undefined" ? {} : exports);
-/******/ 	for(var __webpack_i__ in __webpack_exports__) __webpack_export_target__[__webpack_i__] = __webpack_exports__[__webpack_i__];
-/******/ 	if(__webpack_exports__.__esModule) Object.defineProperty(__webpack_export_target__, "__esModule", { value: true });
-/******/ 	
+var __webpack_export_target__ = (exports = typeof exports === "undefined" ? {} : exports);
+for(var __webpack_i__ in __webpack_exports__) __webpack_export_target__[__webpack_i__] = __webpack_exports__[__webpack_i__];
+if(__webpack_exports__.__esModule) Object.defineProperty(__webpack_export_target__, "__esModule", { value: true });
 /******/ })()
 ;
 

@@ -1,6 +1,7 @@
 {
     "name": "scrypted-birdnet-plugin",
     "version": "1.0.0",
+    "type": "module",
     "description": "Scrypted plugin to integrate BirdNET for bird sound recognition via TensorFlow Lite",
     "main": "dist/main.js",
     "scripts": {
@@ -19,14 +20,12 @@
         "scrypted",
         "plugin",
         "birdnet",
-        "tflite",
-        "virtual-camera"
+        "tflite"
     ],
     "author": "Your Name",
     "license": "MIT",
     "dependencies": {
         "@scrypted/sdk": "latest",
-        "@scrypted/x11-camera": "latest",
         "@tensorflow/tfjs-node": "^4.17.0",
         "fft.js": "^4.0.4",
         "node-addon-api": "^8.3.0",
@@ -40,7 +39,7 @@
     },
     "scrypted": {
         "name": "BirdNET Audio Detector",
-        "description": "Identifies bird sounds using BirdNET (TFLite) and displays results as a virtual camera.",
+        "description": "Identifies bird sounds using BirdNET (TFLite) and displays results.",
         "type": "DeviceProvider",
         "interfaces": [
             "DeviceProvider",
@@ -52,6 +51,7 @@
     "files": [
         "dist/**/*",
         "models/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite",
-        "models/labels_nm.txt"
+        "models/labels_nm.txt",
+        "python/birdnet_analysis.py"
     ]
 }
