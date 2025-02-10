@@ -11,51 +11,85 @@ import {
     ScryptedDeviceType,
     ScryptedNativeId,
     DeviceCreatorSettings,
+    SettingValue,
     sdk
 } from '@scrypted/sdk';
+import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { PassThrough } from 'stream';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import http from 'http';
+import crypto from 'crypto';
 
-class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, DeviceCreator {
-    devices: Map<string, any> = new Map();
-    mediaManager: MediaManager;
-    deviceManager: DeviceManager;
+const { deviceManager } = sdk;
+
+class BirdNETDevice extends ScryptedDeviceBase implements Settings {
+    storageSettings = new StorageSettings(this, {
+        mode: {
+            title: 'Operation Mode',
+            description: 'Choose between self-contained (uses bundled model) or external (connects to existing BirdNET instance)',
+            value: this.storage.getItem('mode') || 'self-contained',
+            choices: ['self-contained', 'external'],
+        },
+        audioSource: {
+            title: 'Audio Source',
+            description: 'Select audio input source',
+            value: this.storage.getItem('audioSource') || 'mic',
+            choices: ['mic', 'rtsp'],
+        },
+        rtspAudioURL: {
+            title: 'RTSP Audio URL',
+            description: 'URL for RTSP audio stream (only used if Audio Source is set to rtsp)',
+            value: this.storage.getItem('rtspAudioURL'),
+            placeholder: 'rtsp://camera.example.com/audio',
+        },
+        birdnetUIURL: {
+            title: 'External BirdNET URL',
+            description: 'URL of external BirdNET instance (only used in external mode)',
+            value: this.storage.getItem('birdnetUIURL') || 'http://birdnet.local:8080',
+            placeholder: 'http://birdnet.local:8080',
+        },
+        birdnetThreshold: {
+            title: 'Detection Threshold',
+            description: 'Minimum confidence threshold for bird detection (0.0 to 1.0)',
+            type: 'number',
+            value: parseFloat(this.storage.getItem('birdnetThreshold') || '0.7'),
+            placeholder: '0.7',
+        }
+    });
 
     // Process references for managing child processes
     birdnetProcess: ChildProcessWithoutNullStreams | null = null;
     audioStream: PassThrough | null = null;
     ffmpegAudioProcess: ChildProcessWithoutNullStreams | null = null;
 
-    // Plugin settings
-    settings: { [key: string]: any } = {};
-
     // TTY output storage
     ttyOutput: string = "";
 
-    constructor(nativeId?: string) {
+    constructor(nativeId: string) {
         super(nativeId);
-        this.mediaManager = sdk.mediaManager;
-        this.deviceManager = sdk.deviceManager;
-        
-        this.loadSettings();
         this.startBirdNET();
     }
 
-    loadSettings() {
-        this.settings.mode = this.storage.getItem('mode') || 'self-contained';
-        this.settings.birdnetUIURL = this.storage.getItem('birdnetUIURL') || 'http://birdnet.local:8080';
-        this.settings.audioSource = this.storage.getItem('audioSource') || 'mic';
-        this.settings.rtspAudioURL = this.storage.getItem('rtspAudioURL') || '';
-        this.settings.birdnetThreshold = parseFloat(this.storage.getItem('birdnetThreshold') || '0.7');
+    async getSettings(): Promise<Setting[]> {
+        return this.storageSettings.getSettings();
+    }
+
+    async putSetting(key: string, value: SettingValue): Promise<void> {
+        await this.storageSettings.putSetting(key, value);
+        await this.startBirdNET();
     }
 
     async startBirdNET() {
         try {
-            if (this.settings.mode === 'external') {
-                if (this.settings.audioSource === 'rtsp') {
+            // Stop any existing processes
+            this.dispose();
+
+            const settings = this.storageSettings.values;
+            
+            if (settings.mode === 'external') {
+                if (settings.audioSource === 'rtsp') {
                     this.audioStream = new PassThrough();
                     this.startAudioCapture();
                 }
@@ -70,11 +104,11 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
                 }
                 this.birdnetProcess = spawn('birdnet-go', [
                     'realtime',
-                    '--threshold', this.settings.birdnetThreshold.toString(),
+                    '--threshold', settings.birdnetThreshold.toString(),
                     '--locale', 'en',
-                    ...(this.settings.audioSource === 'rtsp' ? ['--audio-stdin'] : [])
+                    ...(settings.audioSource === 'rtsp' ? ['--audio-stdin'] : [])
                 ]);
-                if (this.settings.audioSource === 'rtsp' && this.audioStream) {
+                if (settings.audioSource === 'rtsp' && this.audioStream) {
                     this.audioStream.pipe(this.birdnetProcess.stdin);
                 }
                 this.birdnetProcess.stdout.on('data', (data) => {
@@ -87,9 +121,9 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
                 this.birdnetProcess.on('exit', (code) => {
                     this.console.log(`BirdNET-Go exited with code ${code}`);
                 });
-            } else if (this.settings.mode === 'self-contained') {
+            } else if (settings.mode === 'self-contained') {
                 this.console.log('Initializing self-contained BirdNET analysis');
-                if (this.settings.audioSource === 'rtsp') {
+                if (settings.audioSource === 'rtsp') {
                     this.audioStream = new PassThrough();
                     this.startAudioCapture();
                 }
@@ -141,7 +175,7 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
     private pollExternalBirdNET() {
         const pollInterval = 1000; // Poll every second
         setInterval(() => {
-            http.get(this.settings.birdnetUIURL, (res) => {
+            http.get(this.storageSettings.values.birdnetUIURL, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
@@ -168,11 +202,11 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
         process.stdout.write('\x1b[1m=== BirdNET Detections ===\x1b[0m\n\n');
         
         // Mode indicator
-        process.stdout.write(`Mode: ${this.settings.mode}\n`);
-        if (this.settings.mode === 'external') {
-            process.stdout.write(`Source: ${this.settings.birdnetUIURL}\n`);
+        process.stdout.write(`Mode: ${this.storageSettings.values.mode}\n`);
+        if (this.storageSettings.values.mode === 'external') {
+            process.stdout.write(`Source: ${this.storageSettings.values.birdnetUIURL}\n`);
         } else {
-            process.stdout.write(`Audio: ${this.settings.audioSource}\n`);
+            process.stdout.write(`Audio: ${this.storageSettings.values.audioSource}\n`);
         }
         process.stdout.write('\n');
 
@@ -191,9 +225,9 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
     }
 
     startAudioCapture() {
-        if (this.settings.audioSource === 'rtsp') {
+        if (this.storageSettings.values.audioSource === 'rtsp') {
             this.ffmpegAudioProcess = spawn('ffmpeg', [
-                '-i', this.settings.rtspAudioURL,
+                '-i', this.storageSettings.values.rtspAudioURL,
                 '-vn',
                 '-acodec', 'pcm_s16le',
                 '-ar', '48000',
@@ -208,102 +242,6 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
                 this.console.error('FFmpeg audio capture error:', err);
             });
         }
-    }
-
-    async getDevice(nativeId: string): Promise<Device> {
-        const device = {
-            name: "BirdNET Audio Detector",
-            type: ScryptedDeviceType.Sensor,
-            nativeId: nativeId,
-            interfaces: [ScryptedInterface.Settings],
-        };
-        return device;
-    }
-
-    async createDevice(settings: DeviceCreatorSettings): Promise<string> {
-        return settings.nativeId.toString();
-    }
-
-    async getSettings(): Promise<Setting[]> {
-        return [
-            {
-                key: 'mode',
-                title: 'Operation Mode',
-                description: 'Choose between self-contained (uses bundled model) or external (connects to existing BirdNET instance)',
-                type: 'string',
-                choices: ['self-contained', 'external'],
-                value: this.settings.mode
-            },
-            {
-                key: 'audioSource',
-                title: 'Audio Source',
-                description: 'Select audio input source',
-                type: 'string',
-                choices: ['mic', 'rtsp'],
-                value: this.settings.audioSource
-            },
-            {
-                key: 'rtspAudioURL',
-                title: 'RTSP Audio URL',
-                description: 'URL for RTSP audio stream (only used if Audio Source is set to rtsp)',
-                type: 'string',
-                value: this.settings.rtspAudioURL,
-                placeholder: 'rtsp://camera.example.com/audio'
-            },
-            {
-                key: 'birdnetUIURL',
-                title: 'External BirdNET URL',
-                description: 'URL of external BirdNET instance (only used in external mode)',
-                type: 'string',
-                value: this.settings.birdnetUIURL,
-                placeholder: 'http://birdnet.local:8080'
-            },
-            {
-                key: 'birdnetThreshold',
-                title: 'Detection Threshold',
-                description: 'Minimum confidence threshold for bird detection (0.0 to 1.0)',
-                type: 'number',
-                value: this.settings.birdnetThreshold,
-                placeholder: '0.7'
-            }
-        ];
-    }
-
-    async putSetting(key: string, value: string | number): Promise<void> {
-        this.storage.setItem(key, value.toString());
-        this.settings[key] = value;
-        // Restart the service when settings change
-        await this.startBirdNET();
-    }
-
-    dispose() {
-        if (this.birdnetProcess) {
-            this.birdnetProcess.kill();
-            this.birdnetProcess = null;
-        }
-        
-        if (this.ffmpegAudioProcess) {
-            this.ffmpegAudioProcess.kill();
-            this.ffmpegAudioProcess = null;
-        }
-        if (this.audioStream) {
-            this.audioStream.destroy();
-            this.audioStream = null;
-        }
-    }
-
-    async getCreateDeviceSettings(): Promise<Setting[]> {
-        return [
-            {
-                key: 'name',
-                title: 'Device Name',
-                type: 'string',
-            }
-        ];
-    }
-
-    async releaseDevice(id: string, nativeId: ScryptedNativeId): Promise<void> {
-        // Cleanup logic when device is removed
     }
 
     async analyzeAudioChunk(samples: Float32Array) {
@@ -385,7 +323,139 @@ class BirdNETPlugin extends ScryptedDeviceBase implements DeviceProvider, Device
 
     // Implement Web interface
     async getResource(requestBody: string): Promise<string> {
-        return `<html><head><title>BirdNET TTY UI</title></head><body><pre>${this.ttyOutput}</pre></body></html>`;
+        // Create a more structured and styled HTML page
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BirdNET Detection Results</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="10">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: monospace;
+        }
+        .status {
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.running {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.stopped {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BirdNET Detection Results</h1>
+        <div class="status ${this.birdnetProcess ? 'running' : 'stopped'}">
+            Status: ${this.birdnetProcess ? 'Running' : 'Stopped'}
+        </div>
+        <pre>${this.ttyOutput || 'No detections yet...'}</pre>
+    </div>
+    <script>
+        // Auto-scroll to bottom
+        window.onload = function() {
+            window.scrollTo(0, document.body.scrollHeight);
+        };
+    </script>
+</body>
+</html>`;
+    }
+
+    dispose() {
+        if (this.birdnetProcess) {
+            this.birdnetProcess.kill();
+            this.birdnetProcess = null;
+        }
+        
+        if (this.ffmpegAudioProcess) {
+            this.ffmpegAudioProcess.kill();
+            this.ffmpegAudioProcess = null;
+        }
+        if (this.audioStream) {
+            this.audioStream.destroy();
+            this.audioStream = null;
+        }
+    }
+}
+
+class BirdNETPlugin extends ScryptedDeviceBase implements DeviceCreator, DeviceProvider {
+    devices = new Map<string, BirdNETDevice>();
+
+    constructor(nativeId?: string) {
+        super(nativeId);
+    }
+
+    async getCreateDeviceSettings(): Promise<Setting[]> {
+        return [
+            {
+                key: 'name',
+                title: 'Name',
+                description: 'Name for the BirdNET detector',
+            }
+        ];
+    }
+
+    async createDevice(settings: DeviceCreatorSettings): Promise<string> {
+        const nativeId = crypto.randomUUID();
+        const name = settings.name?.toString() || 'BirdNET Detector';
+        
+        await deviceManager.onDeviceDiscovered({
+            nativeId,
+            name,
+            type: ScryptedDeviceType.Sensor,
+            interfaces: [
+                ScryptedInterface.Settings
+            ],
+        });
+
+        await this.getDevice(nativeId);
+        return nativeId;
+    }
+
+    async getDevice(nativeId: string) {
+        let device = this.devices.get(nativeId);
+        if (!device) {
+            device = new BirdNETDevice(nativeId);
+            this.devices.set(nativeId, device);
+        }
+        return device;
+    }
+
+    async releaseDevice(id: string, nativeId: string): Promise<void> {
+        const device = this.devices.get(nativeId);
+        if (device) {
+            device.dispose();
+            this.devices.delete(nativeId);
+        }
     }
 }
 

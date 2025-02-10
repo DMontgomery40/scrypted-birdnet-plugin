@@ -1833,60 +1833,66 @@ class BirdNETPlugin extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedD
         }
     }
     async getDevice(nativeId) {
-        if (!this.devices.has(nativeId)) {
-            const device = new BirdNETCameraDevice(nativeId);
-            this.devices.set(nativeId, device);
-        }
-        return this.devices.get(nativeId);
+        const device = {
+            name: "BirdNET Audio Detector",
+            type: _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceType.Sensor,
+            nativeId: nativeId,
+            interfaces: [_scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedInterface.Settings],
+        };
+        return device;
     }
-    async createDevice(device) {
-        // For a single device, we simply return the nativeId.
-        return device.nativeId;
+    async createDevice(settings) {
+        return settings.nativeId.toString();
     }
     async getSettings() {
         return [
             {
                 key: 'mode',
                 title: 'Operation Mode',
-                description: 'Select "self-contained" or "external" mode',
+                description: 'Choose between self-contained (uses bundled model) or external (connects to existing BirdNET instance)',
                 type: 'string',
-                value: this.settings.mode || 'self-contained'
-            },
-            {
-                key: 'birdnetUIURL',
-                title: 'BirdNET UI URL',
-                description: 'URL for BirdNET UI when in external mode',
-                type: 'string',
-                value: this.settings.birdnetUIURL || 'http://birdnet.local:8080'
+                choices: ['self-contained', 'external'],
+                value: this.settings.mode
             },
             {
                 key: 'audioSource',
                 title: 'Audio Source',
-                description: 'Choose "mic" for local microphone or "rtsp" for RTSP audio feed',
+                description: 'Select audio input source',
                 type: 'string',
-                value: this.settings.audioSource || 'mic'
+                choices: ['mic', 'rtsp'],
+                value: this.settings.audioSource
             },
             {
                 key: 'rtspAudioURL',
                 title: 'RTSP Audio URL',
-                description: 'RTSP URL for audio capture if using RTSP audio',
+                description: 'URL for RTSP audio stream (only used if Audio Source is set to rtsp)',
                 type: 'string',
-                value: this.settings.rtspAudioURL || ''
+                value: this.settings.rtspAudioURL,
+                placeholder: 'rtsp://camera.example.com/audio'
+            },
+            {
+                key: 'birdnetUIURL',
+                title: 'External BirdNET URL',
+                description: 'URL of external BirdNET instance (only used in external mode)',
+                type: 'string',
+                value: this.settings.birdnetUIURL,
+                placeholder: 'http://birdnet.local:8080'
             },
             {
                 key: 'birdnetThreshold',
-                title: 'BirdNET Confidence Threshold',
-                description: 'Confidence threshold for bird detection (e.g., 0.7)',
+                title: 'Detection Threshold',
+                description: 'Minimum confidence threshold for bird detection (0.0 to 1.0)',
                 type: 'number',
-                value: this.settings.birdnetThreshold || 0.7
+                value: this.settings.birdnetThreshold,
+                placeholder: '0.7'
             }
         ];
     }
     async putSetting(key, value) {
-        // Save the setting and update internal settings.
         this.storage.setItem(key, value.toString());
         this.settings[key] = value;
-        // In this basic example, changes require a plugin restart to take effect.
+        // Restart the service when settings change
+        await this.startBirdNET();
     }
     dispose() {
         if (this.birdnetProcess) {
@@ -1908,8 +1914,7 @@ class BirdNETPlugin extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedD
                 key: 'name',
                 title: 'Device Name',
                 type: 'string',
-            },
-            // Add other settings as needed
+            }
         ];
     }
     async releaseDevice(id, nativeId) {
@@ -1995,69 +2000,7 @@ class BirdNETPlugin extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedD
     async getResource(requestBody) {
         return `<html><head><title>BirdNET TTY UI</title></head><body><pre>${this.ttyOutput}</pre></body></html>`;
     }
-    postprocessResults(predictions) {
-        // Implement BirdNET's post-processing
-        // Convert raw model output to species predictions
-        try {
-            // Get the label mapping from BirdNET-Analyzer
-            const labelMap = __webpack_require__(Object(function webpackMissingModule() { var e = new Error("Cannot find module './labels.json'"); e.code = 'MODULE_NOT_FOUND'; throw e; }()));
-            // Convert predictions to species confidence scores
-            const results = [];
-            for (let i = 0; i < predictions.length; i++) {
-                if (predictions[i] > this.settings.birdnetThreshold) {
-                    results.push({
-                        species: labelMap[i],
-                        confidence: predictions[i]
-                    });
-                }
-            }
-            // Sort by confidence
-            results.sort((a, b) => b.confidence - a.confidence);
-            return results;
-        }
-        catch (err) {
-            this.console.error('Results post-processing error:', err);
-            throw err;
-        }
-    }
 }
-class BirdNETCameraDevice extends _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceBase {
-    constructor(nativeId) {
-        super(nativeId);
-        this.mediaManager = _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.mediaManager;
-    }
-    async getVideoStreamOptions() {
-        return [{
-                id: 'default',
-                name: 'Default',
-                video: {
-                    width: 1280,
-                    height: 720,
-                    fps: 15,
-                },
-                container: 'rtsp',
-            }];
-    }
-    async getVideoStream(options) {
-        // Get the x11-camera plugin instance
-        const x11Plugin = await _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.systemManager.getDeviceByName('@scrypted/x11-camera');
-        if (!x11Plugin) {
-            throw new Error('Please install the x11-camera plugin from the Scrypted plugin store');
-        }
-        // Create a new x11 camera device through the plugin
-        const deviceId = await x11Plugin.createDevice({
-            name: 'BirdNET Display',
-            type: _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedDeviceType.Camera,
-            nativeId: this.nativeId + '_x11',
-            interfaces: [_scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.ScryptedInterface.VideoCamera]
-        });
-        // Get the device instance
-        const x11Device = await _scrypted_sdk__WEBPACK_IMPORTED_MODULE_0__.sdk.systemManager.getDeviceById(deviceId);
-        // Get the stream from the x11 camera device
-        return x11Device.getVideoStream(options);
-    }
-}
-// Export the plugin instance.
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (BirdNETPlugin);
 
 })();
