@@ -13,7 +13,7 @@ import argparse
 try:
     import tflite_runtime.interpreter as tflite  # type: ignore
 except ImportError:
-    import tensorflow.lite as tflite  # type: ignore
+    from tensorflow import lite as tflite  # type: ignore
 
 import numpy as np  # type: ignore
 import wave
