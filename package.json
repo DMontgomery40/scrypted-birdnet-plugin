@@ -1,57 +1,61 @@
 {
-    "name": "scrypted-birdnet-plugin",
-    "version": "1.1.0",
-    "type": "module",
-    "description": "Scrypted plugin to integrate BirdNET for bird sound recognition via TensorFlow Lite",
-    "main": "dist/main.js",
-    "scripts": {
-        "scrypted-setup-project": "scrypted-setup-project",
-        "build": "scrypted-webpack",
-        "prepublishOnly": "NODE_ENV=production scrypted-webpack",
-        "prescrypted-vscode-launch": "scrypted-webpack",
-        "scrypted-vscode-launch": "scrypted-deploy-debug",
-        "scrypted-deploy-debug": "scrypted-deploy-debug",
-        "scrypted-debug": "scrypted-debug",
-        "scrypted-deploy": "scrypted-deploy",
-        "scrypted-webpack": "scrypted-webpack",
-        "scrypted-watch": "scrypted-watch"
-    },
-    "keywords": [
-        "scrypted",
-        "plugin",
-        "birdnet",
-        "tflite"
-    ],
-    "author": "Your Name",
-    "license": "MIT",
-    "dependencies": {
-        "@scrypted/sdk": "latest",
-        "@tensorflow/tfjs-node": "^4.17.0",
-        "fft.js": "^4.0.4",
-        "node-addon-api": "^8.3.0",
-        "node-audiorecorder": "^3.0.0",
-        "node-wav": "^0.0.2"
-    },
-    "devDependencies": {
-        "@scrypted/common": "latest",
-        "@scrypted/server": "latest",
-        "@types/node": "^18.0.0"
-    },
-    "scrypted": {
-        "name": "BirdNET Audio Detector",
-        "description": "Identifies bird sounds using BirdNET (TFLite) and displays results.",
-        "type": "DeviceProvider",
-        "interfaces": [
-            "DeviceProvider",
-            "DeviceCreator",
-            "Settings",
-            "Web"
-        ]
-    },
-    "files": [
-        "dist/**/*",
-        "models/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite",
-        "models/labels_nm.txt",
-        "python/birdnet_analysis.py"
+  "name": "scrypted-birdnet-plugin",
+  "version": "1.1.0",
+  "type": "module",
+  "description": "Scrypted plugin to integrate BirdNET for bird sound recognition via TensorFlow Lite",
+  "main": "dist/main.js",
+  "scripts": {
+    "scrypted-setup-project": "scrypted-setup-project",
+    "build": "scrypted-webpack",
+    "prepublishOnly": "NODE_ENV=production scrypted-webpack",
+    "prescrypted-vscode-launch": "scrypted-webpack",
+    "scrypted-vscode-launch": "scrypted-deploy-debug",
+    "scrypted-deploy-debug": "scrypted-deploy-debug",
+    "scrypted-debug": "scrypted-debug",
+    "scrypted-deploy": "scrypted-deploy",
+    "scrypted-webpack": "scrypted-webpack",
+    "scrypted-watch": "scrypted-watch",
+    "test": "jest"
+  },
+  "keywords": [
+    "scrypted",
+    "plugin",
+    "birdnet",
+    "tflite"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "@scrypted/sdk": "latest",
+    "@tensorflow/tfjs-node": "^4.17.0",
+    "fft.js": "^4.0.4",
+    "node-addon-api": "^8.3.0",
+    "node-audiorecorder": "^3.0.0",
+    "node-wav": "^0.0.2"
+  },
+  "devDependencies": {
+    "@scrypted/common": "latest",
+    "@scrypted/server": "latest",
+    "@types/node": "^18.0.0",
+    "jest": "^29.6.0",
+    "ts-jest": "^29.1.0",
+    "@types/jest": "^29.5.0"
+  },
+  "scrypted": {
+    "name": "BirdNET Audio Detector",
+    "description": "Identifies bird sounds using BirdNET (TFLite) and displays results.",
+    "type": "DeviceProvider",
+    "interfaces": [
+      "DeviceProvider",
+      "DeviceCreator",
+      "Settings",
+      "Web"
     ]
+  },
+  "files": [
+    "dist/**/*",
+    "models/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite",
+    "models/labels_nm.txt",
+    "python/birdnet_analysis.py"
+  ]
 }
